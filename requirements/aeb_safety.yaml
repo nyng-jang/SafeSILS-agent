@@ -1,0 +1,121 @@
+# AEB safety concept (single source of truth for traceability).
+# Derived from the step-1 document "ISO 26262 분석과 AEB 안전 개념".
+# All values are learning assumptions, not production AEB values.
+
+item:
+  name: AEB
+  speed_range_kph: [10, 80]
+  controller_period_ms: 10
+  sensor_period_ms: 50
+
+hazards:
+  - id: HZ-01
+    malfunction: Full braking without collision risk
+    situation: 60-80 km/h rural road, follower vehicle close behind
+    event: Multi-vehicle rear-end collision
+    S: 3
+    E: 4
+    C: 3
+    asil: D
+    safety_goal: SG-01
+  - id: HZ-02
+    malfunction: Full braking without collision risk
+    situation: 10-30 km/h urban congestion
+    event: Low-speed rear-end collision
+    S: 1
+    E: 4
+    C: 2
+    asil: A
+    safety_goal: SG-01
+  - id: HZ-03
+    malfunction: Braking continues after threat cleared or driver intervened
+    situation: Driver steering or accelerating to evade
+    event: Failed evasion, rear-end collision
+    S: 2
+    E: 3
+    C: 3
+    asil: B
+    safety_goal: SG-02
+  - id: HZ-04
+    malfunction: Missing or insufficient braking when collision is imminent
+    situation: Lead vehicle stops suddenly, driver inattentive
+    event: Front collision
+    S: 2
+    E: 3
+    C: 2
+    asil: A
+    safety_goal: SG-03
+
+safety_goals:
+  - id: SG-01
+    asil: D
+    text: No automatic deceleration above 1.5 m/s^2 without collision risk
+    ftti_ms: 200
+    safe_state: brake request 0, AEB disabled, fault lamp on
+  - id: SG-02
+    asil: B
+    text: No continued automatic braking after threat cleared or driver intervention
+    ftti_ms: 300
+    safe_state: brake request 0
+  - id: SG-03
+    asil: A
+    text: Prevent missing braking when collision is imminent, or inform the driver
+    ftti_ms: 500
+    safe_state: DEGRADED with warning kept and fault lamp on
+
+functional_safety_requirements:
+  - {id: FSR-01, asil: D, parent: SG-01, text: Automatic braking only when radar and camera confirm the same object}
+  - {id: FSR-02, asil: D, parent: SG-01, text: Detect corrupted, repeated, delayed or lost sensor messages and block the brake request}
+  - {id: FSR-03, asil: D, parent: SG-01, text: Independent monitor checks brake request plausibility and enters FAIL_SAFE on mismatch}
+  - {id: FSR-04, asil: B, parent: SG-02, text: Release automatic braking when driver intervention is detected}
+  - {id: FSR-05, asil: A, parent: SG-03, text: On single sensor failure enter DEGRADED and warn the driver}
+
+technical_safety_requirements:
+  - id: TSR-01
+    asil: D
+    parent: FSR-02
+    text: Detect message CRC error or frozen alive counter
+    criterion: e2e_error flag within one controller cycle (10 ms) of the faulty frame arriving
+    params: {detect_ms: 10}
+  - id: TSR-02
+    asil: D
+    parent: FSR-02
+    text: Declare timeout when sensor messages are missing
+    criterion: timeout flag no later than one control cycle after 150 ms without a valid message (an earlier, conservative timeout is reported but allowed)
+    params: {timeout_ms: 150}
+  - id: TSR-03
+    asil: D
+    parent: FSR-01
+    text: Detect radar/camera range disagreement
+    criterion: difference > max(3 m, 15 %) for 100 ms inhibits automatic braking
+    params: {abs_m: 3.0, rel: 0.15, debounce_ms: 100}
+  - id: TSR-04
+    asil: D
+    parent: FSR-03
+    text: Independent monitor recomputes TTC and compares with the brake request
+    criterion: mismatch persisting 50 ms leads to FAIL_SAFE
+    params: {debounce_ms: 50}
+  - id: TSR-05
+    asil: D
+    parent: SG-01
+    text: Set brake request to zero in FAIL_SAFE
+    criterion: brake_req_mps2 = 0 within 50 ms of fault detection
+    params: {react_ms: 50}
+  - id: TSR-06
+    asil: B
+    parent: FSR-04
+    text: Treat brake pedal or steering rate > 100 deg/s as driver intervention
+    criterion: automatic braking released within 100 ms of intervention
+    params: {steer_rate_dps: 100, release_ms: 100}
+  - id: TSR-07
+    asil: A
+    parent: FSR-05
+    text: Enter DEGRADED and light the fault lamp on single sensor failure
+    criterion: within 200 ms of the failure
+    params: {react_ms: 200}
+  - id: TSR-08
+    asil: D
+    parent: FSR-03
+    text: Watchdog supervises the 10 ms control task period
+    criterion: 3 consecutive period violations lead to FAIL_SAFE
+    params: {period_ms: 10, tolerance: 1.5, max_violations: 3}

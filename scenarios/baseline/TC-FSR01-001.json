@@ -1,0 +1,38 @@
+{
+  "tc_id": "TC-FSR01-001",
+  "requirements": [
+    "FSR-01",
+    "SG-01"
+  ],
+  "description": "Radar ghost object 20 m ahead on a free road at 80 km/h",
+  "duration_s": 8.0,
+  "seed": 0,
+  "ego_speed_kph": 80,
+  "lead": {
+    "present": false,
+    "gap_m": 40.0,
+    "speed_kph": 30.0,
+    "decel_at_s": null,
+    "decel_mps2": 0.0
+  },
+  "driver": {
+    "brake_at_s": null,
+    "brake_mps2": 4.0,
+    "steer_at_s": null,
+    "steer_rate_dps": 150.0,
+    "steer_duration_s": 0.5
+  },
+  "faults": [
+    {
+      "type": "ghost_object",
+      "start_s": 2.0,
+      "end_s": 4.0,
+      "target": "radar",
+      "params": {
+        "range_m": 20.0,
+        "rel_vel_mps": -10.0
+      }
+    }
+  ],
+  "exploratory": false
+}

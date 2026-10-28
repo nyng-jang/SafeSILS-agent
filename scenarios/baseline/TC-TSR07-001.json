@@ -1,0 +1,35 @@
+{
+  "tc_id": "TC-TSR07-001",
+  "requirements": [
+    "TSR-07",
+    "SG-03"
+  ],
+  "description": "Camera reports sensor failure while approaching",
+  "duration_s": 8.0,
+  "seed": 0,
+  "ego_speed_kph": 50.0,
+  "lead": {
+    "present": true,
+    "gap_m": 40.0,
+    "speed_kph": 0.0,
+    "decel_at_s": null,
+    "decel_mps2": 0.0
+  },
+  "driver": {
+    "brake_at_s": null,
+    "brake_mps2": 4.0,
+    "steer_at_s": null,
+    "steer_rate_dps": 150.0,
+    "steer_duration_s": 0.5
+  },
+  "faults": [
+    {
+      "type": "sensor_dropout",
+      "start_s": 2.0,
+      "end_s": null,
+      "target": "camera",
+      "params": {}
+    }
+  ],
+  "exploratory": false
+}
