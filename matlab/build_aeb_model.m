@@ -35,6 +35,10 @@ OUTPUT_NAMES = {'aeb_state', 'brake_req_mps2', 'brake_cmd_internal', 'fcw_warnin
 if bdIsLoaded(mdl)
     close_system(mdl, 0);
 end
+slx = fullfile(here, [mdl '.slx']);
+if exist(slx, 'file')
+    delete(slx);  % rebuilt from scratch; avoids the "model name is shadowing" warning
+end
 new_system(mdl);
 set_param(mdl, 'SolverType', 'Fixed-step', 'Solver', 'FixedStepDiscrete', ...
           'FixedStep', '0.01', 'StopTime', 'inf');
