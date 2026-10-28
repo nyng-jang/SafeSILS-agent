@@ -6,6 +6,10 @@ Two levels:
     or MATLAB; every output of every activation must match.
   * closed loop: run the same scenario with the exported FMU in the loop and
     compare the judge's verdicts and key signals with the Python run.
+
+export_vectors writes the recorded inputs and the Python outputs as CSV test
+vectors, so matlab/b2b_simulink.m can run the open-loop comparison against the
+Simulink model inside MATLAB, without Python on that machine.
 """
 from __future__ import annotations
 
@@ -19,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from .controller import AEBController
-from .external import OUTPUT_NAMES, decode_outputs, input_vector
+from .external import OUTPUT_NAMES, decode_outputs, encode_outputs, input_vector
 from .judge import evaluate
 from .scenario import Scenario
 from .sim import ControllerUnderTest, run
@@ -71,9 +75,36 @@ def replay_engine() -> list[str]:
     raise RuntimeError("needs GNU Octave or MATLAB on PATH for the open-loop replay")
 
 
-def open_loop(scn: Scenario) -> list[Mismatch]:
+def record(scn: Scenario) -> Recorder:
     rec = Recorder(AEBController())
     run(scn, rec)
+    return rec
+
+
+def _write_csv(path: Path, rows) -> None:
+    """CSV with full double precision and MATLAB spellings of Inf/NaN."""
+    def fmt(v: float) -> str:
+        if math.isnan(v):
+            return "NaN"
+        if math.isinf(v):
+            return "Inf" if v > 0 else "-Inf"
+        return f"{v:.17g}"
+    path.write_text("".join(",".join(fmt(float(v)) for v in row) + "\n" for row in rows))
+
+
+def export_vectors(scn: Scenario, out_dir: Path) -> tuple[Path, Path]:
+    """Write <tc_id>.in.csv (one activation per row, layout of replay_inputs.m) and
+    <tc_id>.out.csv (the Python reference outputs, layout of aeb_controller_step.m)."""
+    rec = record(scn)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fin, fout = out_dir / f"{scn.tc_id}.in.csv", out_dir / f"{scn.tc_id}.out.csv"
+    _write_csv(fin, rec.inputs)
+    _write_csv(fout, (encode_outputs(o) for o in rec.outputs))
+    return fin, fout
+
+
+def open_loop(scn: Scenario) -> list[Mismatch]:
+    rec = record(scn)
     with tempfile.TemporaryDirectory() as d:
         fin, fout = Path(d) / "in.csv", Path(d) / "out.csv"
         np.savetxt(fin, np.vstack(rec.inputs), delimiter=",", fmt="%.17g")
