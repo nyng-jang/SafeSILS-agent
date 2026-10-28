@@ -10,17 +10,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # requirement diff against the base branch
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install GNU Octave (MATLAB code back-to-back)
-        run: sudo apt-get update -q && sudo apt-get install -y -q octave-no-gui || sudo apt-get install -y -q octave
-      - run: pip install -e ".[dev,fmu,agent]"
+      - name: Install GNU Octave (MATLAB code back-to-back), PDF libraries and Korean fonts
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libpango-1.0-0 libpangoft2-1.0-0 fonts-noto-cjk
+          sudo apt-get install -y -q octave-no-gui || sudo apt-get install -y -q octave
+      - run: pip install -e ".[dev,fmu,agent,pdf]"
       - run: pytest -q
+      - name: Regression selection set for changed requirements
+        if: github.event_name == 'pull_request'
+        run: |
+          safesils select --base-ref "origin/${{ github.base_ref }}" | tee out-select.txt
+          { echo '### Requirement changes and affected TCs'; echo '```'; cat out-select.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Run baseline scenarios
         run: safesils run scenarios/baseline --db out/results.db --no-signals --strict
+      - name: Verification report (traceability, A-SPICE structure, PDF)
+        run: |
+          args=(--db out/results.db --out out/report --pdf --strict)
+          if [ "${{ github.event_name }}" = pull_request ]; then args+=(--base-ref "origin/${{ github.base_ref }}"); fi
+          safesils report "${args[@]}"
+          cat out/report/verification_report.md >> "$GITHUB_STEP_SUMMARY"
       - name: Agent smoke test (rule mode, injected defect must be found)
         run: |
           mkdir -p out
           safesils agent "TSR-02 검증" --llm none --mutant slow-timeout --db out/agent.db --out out/agent | tee out/agent.log
           grep -q "TC-TSR02-001 .*FAIL" out/agent.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-report
+          path: |
+            out/report/
+            out/agent/

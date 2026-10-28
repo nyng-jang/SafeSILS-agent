@@ -16,7 +16,10 @@ safesils/
   sim.py         1 ms 주기 SILS 루프, ControllerUnderTest 인터페이스
   judge.py       요구사항별 규칙 기반 PASS/FAIL 판정
   generator.py   기준·경계값·복합 고장 시나리오 생성
-  store.py       SQLite 결과 저장(runs, verdicts, signals)
+  store.py       SQLite 결과 저장(runs, verdicts, signals, 에이전트 감사 기록), 실행별 제어기·SW 버전
+  analysis.py    판정 결과 해석: 요구사항별 안전 메커니즘, 반응 시간 여유, 규칙 기반 원인 메모
+  trace.py       양방향 추적성(HZ → SG → FSR → TSR → TC → RUN), 커버리지, 회귀 선별 세트
+  report.py      A-SPICE 정보 항목 구조의 검증 보고서(Markdown, HTML, PDF), 추적성 CSV
   external.py    외부 제어기 인터페이스: Simulink FMU 어댑터, 원시 CAN 프레임 슬롯
   b2b.py         백투백 비교 (Python ↔ MATLAB 코드 개루프, Python ↔ FMU 폐루프)
   mutants.py     안전 메커니즘 하나를 약화시킨 결함 주입 제어기 (변이 테스트, 에이전트 데모)
@@ -106,6 +109,28 @@ LLM의 역할은 제안으로 한정한다.
 
 여유(margin)는 반응 시간 요구사항(SG-01, TSR-01, 04, 05, 06, 07, 08)의 `(한계 − 측정) / 한계`다. 1은 즉시 반응, 0은 한계와 같음, 음수는 위반이다.
 
+## 추적성과 검증 보고서
+
+```bash
+safesils run scenarios/baseline --db out/results.db
+safesils report --db out/results.db --out out/report --pdf     # PDF는 pip install -e ".[pdf]"
+safesils select --changed TSR-02                               # 바뀐 요구사항의 회귀 TC
+safesils select --base-ref origin/main --out out/regression    # git 비교로 자동 선별, 시나리오 복사
+```
+
+`out/report`에 `verification_report.md`·`.html`·`.pdf`, `traceability_matrix.csv`(요구사항 × TC × RUN 전체 쌍), `verification_summary.json`이 생긴다. 보고서 구성은 A-SPICE SYS.5/SWE.6 출력 정보 항목을 따른다.
+
+| 보고서 절 | A-SPICE 정보 항목 | 내용 |
+| --- | --- | --- |
+| 2. 검증 방법 | Verification Measure | 기법, 환경, 진입·종료 기준, 요구사항별 PASS/FAIL 기준 |
+| 3. 검증 데이터 | Verification Measure Data | 결과 DB의 실행·판정·신호 로그, 에이전트 세션 |
+| 4. 회귀 선별 세트 | Verification Measure Selection Set | 바뀐 요구사항과 그 하위 요구사항을 검증하는 TC |
+| 5. 검증 결과 | Verification Result | TC별 판정, 제어기, 미실행 TC, 탐색적 TC |
+| 6. 추적성 | Consistency Evidence | HZ → SG → FSR → TSR → TC → RUN, 직접 상태와 하위 포함 종합 상태 |
+| 7. 문제 보고 | SUP.9 Problem | FAIL 규칙마다 문제 ID, ASIL 기반 심각도, 규칙 원인 메모, 에이전트 LLM 가설 |
+
+요구사항의 종합 상태는 하위 요구사항까지 포함한 가장 나쁜 상태(FAIL > NOT COVERED > NOT RUN > N/A > PASS)다. `--controller`나 `--session`으로 특정 제어기나 에이전트 세션의 실행만 보고할 수 있다. CI는 PR마다 요구사항 변경 영향 TC를 요약에 표시하고, 보고서(PDF 포함)를 `verification-report` 아티팩트로 올린다.
+
 ## 안전 메커니즘과 요구사항
 
 | 메커니즘 | 요구사항 | 판정 규칙 |
@@ -140,4 +165,4 @@ SG-01, TSR-02, TSR-05는 모든 실행에서 불변 조건으로 검사한다.
 2. Python SILS, 시나리오 생성기, 규칙 기반 판정기 ✓
 3. Simulink AEB 제어기와 FMU 연동, Python 제어기와 백투백 비교 ✓ (FMU 내보내기는 MATLAB 환경에서 실행)
 4. LangGraph 에이전트: 자연어 명령, 엣지 케이스 탐색, 로그 분석·원인 추론 ✓
-5. 추적성 매트릭스·검증 보고서 자동 생성, GitHub Actions 회귀 검증
+5. 추적성 매트릭스·검증 보고서 자동 생성, GitHub Actions 회귀 검증 ✓

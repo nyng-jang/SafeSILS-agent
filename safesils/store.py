@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 from .judge import Verdict, overall
@@ -20,7 +22,9 @@ CREATE TABLE IF NOT EXISTS runs (
     collided INTEGER NOT NULL,
     impact_speed_mps REAL,
     description TEXT,
-    scenario_json TEXT NOT NULL
+    scenario_json TEXT NOT NULL,
+    controller TEXT,
+    sw_version TEXT
 );
 CREATE TABLE IF NOT EXISTS verdicts (
     run_id TEXT NOT NULL REFERENCES runs(run_id),
@@ -56,25 +60,43 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 """
 
 
+@lru_cache(maxsize=1)
+def sw_version() -> str:
+    """git describe of the repository the harness runs from: which software was verified."""
+    try:
+        out = subprocess.run(["git", "describe", "--always", "--dirty"], cwd=Path(__file__).resolve().parent,
+                             capture_output=True, text=True, timeout=5)
+        return out.stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
 class ResultStore:
     def __init__(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.path = Path(path)
         self.con = sqlite3.connect(path)
         self.con.executescript(SCHEMA)
+        cols = {r[1] for r in self.con.execute("PRAGMA table_info(runs)")}
+        for col in ("controller", "sw_version"):  # databases from before these columns existed
+            if col not in cols:
+                self.con.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
 
     def next_run_id(self) -> str:
         day = datetime.now(timezone.utc).strftime("%Y%m%d")
         n = self.con.execute("SELECT COUNT(*) FROM runs WHERE run_id LIKE ?", (f"RUN-{day}-%",)).fetchone()[0]
         return f"RUN-{day}-{n + 1:04d}"
 
-    def save(self, res: RunResult, verdicts: list[Verdict], keep_signals: bool = True) -> str:
+    def save(self, res: RunResult, verdicts: list[Verdict], keep_signals: bool = True,
+             controller: str = "python-reference") -> str:
         scn = res.scenario
         run_id = self.next_run_id()
         self.con.execute(
-            "INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO runs (run_id, tc_id, started_at, verdict, exploratory, collided, impact_speed_mps,"
+            " description, scenario_json, controller, sw_version) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (run_id, scn.tc_id, datetime.now(timezone.utc).isoformat(timespec="seconds"), overall(verdicts, scn),
              int(scn.exploratory), int(res.collided), res.impact_speed_mps, scn.description,
-             json.dumps(scn.to_dict(), ensure_ascii=False)),
+             json.dumps(scn.to_dict(), ensure_ascii=False), controller, sw_version()),
         )
         self.con.executemany(
             "INSERT INTO verdicts VALUES (?,?,?,?,?,?,?)",

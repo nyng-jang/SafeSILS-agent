@@ -65,7 +65,7 @@ safety_goals:
 
 functional_safety_requirements:
   - {id: FSR-01, asil: D, parent: SG-01, text: Automatic braking only when radar and camera confirm the same object}
-  - {id: FSR-02, asil: D, parent: SG-01, text: Detect corrupted, repeated, delayed or lost sensor messages and block the brake request}
+  - {id: FSR-02, asil: D, parent: SG-01, text: "Detect corrupted, repeated, delayed or lost sensor messages and block the brake request"}
   - {id: FSR-03, asil: D, parent: SG-01, text: Independent monitor checks brake request plausibility and enters FAIL_SAFE on mismatch}
   - {id: FSR-04, asil: B, parent: SG-02, text: Release automatic braking when driver intervention is detected}
   - {id: FSR-05, asil: A, parent: SG-03, text: On single sensor failure enter DEGRADED and warn the driver}

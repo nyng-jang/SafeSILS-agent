@@ -1,0 +1,124 @@
+# {{ title }}
+
+| 항목 | 값 |
+| --- | --- |
+| 생성 | {{ generated }} |
+| 검증 대상 SW 버전 | {{ sw_versions | join(", ") }} |
+| 검증 대상 제어기 | {{ controllers | join(", ") or "-" }} |
+| 결과 DB | `{{ db }}`{% if session %} (에이전트 세션 {{ session }}){% endif %} |
+| 실행 | {{ runs | length }}건 (PASS {{ status_count[PASS] }}, FAIL {{ status_count[FAIL] }}, N/A {{ status_count[NA] }}) |
+| 문제 보고 | {{ problems | length }}건 |
+| 종료 기준 | {{ "충족" if exit_ok else "미충족" }} |
+
+> 모든 PASS/FAIL은 규칙 기반 판정기(`safesils/judge.py`)가 신호 로그로 결정했다. LLM 에이전트가 쓴 원인 가설은 참고 정보이며 판정에 쓰이지 않는다. HARA 등급, FTTI 등 수치는 학습용 가정값이다.
+
+## 1. 요약
+
+- 판정 가능한 요구사항 {{ checkable | length }}개 중 {{ covered | length }}개에 실행 증거가 있다.
+{% if not_run %}
+- 계획했지만 실행하지 않은 TC: {{ not_run | join(", ") }}
+{% endif %}
+{% if uncovered %}
+- 시험 케이스가 없는 요구사항: {{ uncovered | map(attribute="id") | join(", ") }}
+{% endif %}
+{% for req_id, n in invariant_fails.items() %}
+- 불변 조건 {{ req_id }}이(가) 다른 요구사항용 TC {{ n }}건에서 FAIL했다.
+{% endfor %}
+{% if problems %}
+- 문제 보고 {{ problems | length }}건: {{ problems | map(attribute="req_id") | unique | join(", ") }}
+{% else %}
+- FAIL 없음.
+{% endif %}
+
+## 2. 검증 방법 (Verification Measure)
+
+- **기법:** 소프트웨어 인 더 루프(SILS) 시뮬레이션과 고장 주입. 1 ms 플랜트, 10 ms 제어 주기, 50 ms 센서 주기, E2E 보호된 가상 CAN.
+- **환경:** Python {{ python }}, {{ platform }}. 시나리오 원천: {{ planned_paths | join(", ") }}.
+- **진입 기준:** 요구사항 카탈로그와 계획된 TC가 존재하고, 하네스 자체 시험(판정기 변이 시험 포함)이 통과한다.
+- **종료 기준:** 계획된 TC를 모두 실행했고, 실행 증거가 있는 판정 가능한 요구사항이 모두 PASS이며, 열린 문제 보고가 없다.
+- **불변 조건:** {{ always | join(", ") }}는 모든 실행에서 함께 판정한다.
+
+| 요구사항 | ASIL | 내용 | PASS/FAIL 기준 |
+| --- | --- | --- | --- |
+{% for n in checkable %}
+| {{ n.id }} | {{ n.asil }} | {{ n.text | cell }} | {{ (n.criterion or "판정 규칙: judge.check_" ~ n.id | lower | replace("-", "")) | cell }} |
+{% endfor %}
+
+## 3. 검증 데이터 (Verification Measure Data)
+
+- 실행 기록: `runs`, 요구사항별 판정: `verdicts`, 1 ms 신호 로그: `signals` ({{ signal_rows }}행) in `{{ db }}`.
+- 실행 ID 범위: {{ (runs | map(attribute="run_id") | sort | first) if runs else "-" }} ~ {{ (runs | map(attribute="run_id") | sort | last) if runs else "-" }}
+{% if sessions %}
+- 에이전트 세션: {{ sessions | join(", ") }} (`agent_steps`에 모든 LLM 호출과 도구 호출 기록)
+{% endif %}
+
+## 4. 회귀 선별 세트 (Verification Measure Selection Set)
+
+{% if selection is none %}
+변경된 요구사항이 지정되지 않았다. `safesils report --changed TSR-02` 또는 `--base-ref origin/main`으로 변경 영향 TC를 선별한다.
+{% elif not selection %}
+변경된 요구사항({{ changed | join(", ") }})에 연결된 계획 TC가 없다.
+{% else %}
+변경된 요구사항: {{ changed | join(", ") }}. 해당 요구사항과 그 하위 요구사항을 검증하는 TC를 다시 실행한다.
+
+| TC | 영향받는 요구사항 | 최근 판정 |
+| --- | --- | --- |
+{% for tc, why in selection.items() %}
+| {{ tc }} | {{ why | join(", ") }} | {{ (run_by_tc[tc].verdict if tc in run_by_tc else "NOT RUN") | mark }} |
+{% endfor %}
+{% endif %}
+
+## 5. 검증 결과 (Verification Result)
+
+| TC | 대상 요구사항 | 구분 | RUN | 제어기 | 판정 | FAIL 규칙 |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for r in runs %}
+| {{ r.tc_id }} | {{ r.scenario.requirements | join(", ") }} | {{ "탐색적" if r.exploratory else "계획" }} | {{ r.run_id }} | {{ r.controller }} | {{ r.verdict | mark }} | {{ r.verdicts.values() | selectattr("verdict", "equalto", FAIL) | map(attribute="req_id") | join(", ") or "-" }} |
+{% endfor %}
+{% for tc in not_run %}
+| {{ tc }} | {{ planned_by_tc[tc].requirements | join(", ") }} | 계획 | - | - | {{ "NOT RUN" | mark }} | - |
+{% endfor %}
+
+{% if extra_tcs %}
+탐색적 TC(A-SPICE SYS.5 경험 기반 검증)는 요구사항과 일대일로 추적되지 않을 수 있다: {{ extra_tcs | length }}건.
+{% endif %}
+
+## 6. 추적성 (Consistency Evidence)
+
+상태는 그 요구사항을 직접 검증한 TC의 최근 판정, 종합은 하위 요구사항까지 포함한 가장 나쁜 상태다.
+
+| 수준 | ID | ASIL | 상위 | 내용 | 계획 TC | 실행 | 상태 | 종합 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+{% for level in levels %}
+{% for n in nodes.values() if n.level == level %}
+| {{ n.level }} | {{ n.id }} | {{ n.asil }} | {{ n.parent or (n.children | join(", ") if n.level == "HZ" else "-") }} | {{ n.text | cell }} | {{ n.planned_tcs | join(", ") or "-" }} | {{ n.runs | length }} | {{ (n.status if (n.runs or n.planned_tcs) else "-") | mark }} | {{ n.rollup | mark }} |
+{% endfor %}
+{% endfor %}
+
+HZ 행의 "상위" 열은 그 위험원이 할당된 안전 목표다. 요구사항 ↔ TC ↔ RUN의 전체 쌍은 `traceability_matrix.csv`에 있다.
+
+## 7. 문제 보고 (SUP.9)
+
+{% if not problems %}
+열린 문제가 없다.
+{% else %}
+| ID | 요구사항 | ASIL | 심각도 | TC | RUN | 상태 |
+| --- | --- | --- | --- | --- | --- | --- |
+{% for p in problems %}
+| {{ p.id }} | {{ p.req_id }} | {{ p.asil }} | {{ p.severity }} | {{ p.tc_id }}{{ " (탐색적)" if p.exploratory else "" }} | {{ p.run_id }} | 열림 |
+{% endfor %}
+
+{% for p in problems %}
+### {{ p.id }} {{ p.req_id }} / {{ p.tc_id }}
+
+- **현상:** {{ p.description }}
+- **관련 메커니즘:** {{ p.mechanism }}
+- **규칙 기반 원인 메모:** {{ p.cause }}
+{% if p.hypothesis %}
+- **LLM 원인 가설** ({{ p.hypothesis.model }}, 세션 {{ p.hypothesis.session }}, 확인 필요): {{ p.hypothesis.hypothesis }}
+- **확인 방법 제안:** {{ p.hypothesis.next_check }}
+{% endif %}
+- **근거:** `{{ db }}`의 `signals`에서 `run_id = '{{ p.run_id }}'`
+
+{% endfor %}
+{% endif %}
