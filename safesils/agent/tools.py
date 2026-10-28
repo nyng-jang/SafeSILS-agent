@@ -18,27 +18,13 @@ from pydantic import BaseModel, Field
 
 from .. import generator
 from .. import requirements as reqs
-from ..judge import CHECKS, FAIL, NA, Verdict, evaluate, overall
+from ..analysis import LATENCY_RULES, MECHANISMS, rule_cause, verdict_margin  # noqa: F401 (re-exported)
+from ..judge import CHECKS, FAIL, Verdict, evaluate, overall
 from ..scenario import FAULT_TYPES, SENSORS, Scenario
 from ..sim import ControllerUnderTest, RunResult, run
 from ..store import ResultStore
 
 SWEEPABLE = ("TSR-02", "TSR-03", "TSR-06", "TSR-08")
-# rules whose measured value is a reaction time against a limit: the margin is meaningful
-LATENCY_RULES = ("SG-01", "TSR-01", "TSR-04", "TSR-05", "TSR-06", "TSR-07", "TSR-08")
-MECHANISMS = {
-    "SG-01": "brake output path (monitor gate, plausibility, FAIL_SAFE gate)",
-    "SG-03": "AEB braking and driver warning (FCW, fault lamp)",
-    "FSR-01": "radar/camera object confirmation before braking",
-    "TSR-01": "E2E check (CRC, alive counter)",
-    "TSR-02": "message timeout monitor",
-    "TSR-03": "radar/camera plausibility check",
-    "TSR-04": "independent brake monitor",
-    "TSR-05": "FAIL_SAFE output gate",
-    "TSR-06": "driver override detection",
-    "TSR-07": "single-sensor DEGRADED mode",
-    "TSR-08": "control task watchdog",
-}
 BOUNDS = {"duration_s": (1.0, 20.0), "ego_speed_kph": (0.0, 130.0), "gap_m": (2.0, 200.0),
           "lead_speed_kph": (0.0, 130.0)}
 FLAGS = ("e2e_radar", "e2e_camera", "timeout_radar", "timeout_camera", "mismatch", "monitor_block",
@@ -227,7 +213,8 @@ def rule_plan(command: str) -> Plan:
 # -- execution ------------------------------------------------------------------------------
 
 def execute(scenarios: list[Scenario], make_controller: Callable[[], ControllerUnderTest | None],
-            store: ResultStore, session_id: str, origin: str) -> tuple[list[RunRecord], list[str]]:
+            store: ResultStore, session_id: str, origin: str,
+            controller: str = "python-reference") -> tuple[list[RunRecord], list[str]]:
     """Run and judge each scenario; a scenario that crashes the simulation is reported, not fatal."""
     out, errors = [], []
     for scn in scenarios:
@@ -237,18 +224,10 @@ def execute(scenarios: list[Scenario], make_controller: Callable[[], ControllerU
             errors.append(f"{scn.tc_id} could not be simulated: {e!r}")
             continue
         verdicts = evaluate(res)
-        run_id = store.save(res, verdicts)
+        run_id = store.save(res, verdicts, controller=controller)
         store.link_run(session_id, run_id, origin)
         out.append(RunRecord(scn, run_id, origin, verdicts, overall(verdicts, scn), res))
     return out, errors
-
-
-def verdict_margin(v: Verdict) -> float | None:
-    """Relative slack of a reaction-time rule: 1 = instant, 0 = at the limit, < 0 = violated."""
-    if v.req_id not in LATENCY_RULES or v.verdict == NA or v.measured is None or not v.limit:
-        return None
-    m = (v.limit - v.measured) / v.limit
-    return max(m, -1.0) if math.isfinite(m) else -1.0
 
 
 # -- log analysis ---------------------------------------------------------------------------
@@ -301,16 +280,6 @@ def evidence(rec: RunRecord) -> str:
     states = list(dict.fromkeys(ctrl.aeb_state))
     summary = [f"states visited: {', '.join(states)}", f"flags never set: {', '.join(never) or '-'}"]
     return "\n".join(head + ["verdicts (rule judge):"] + verdicts + summary + ["timeline:"] + timeline(rec))
-
-
-def rule_cause(v: Verdict) -> str:
-    mech = MECHANISMS.get(v.req_id, "safety mechanism")
-    if v.req_id in LATENCY_RULES and v.measured is not None and v.limit:
-        if not math.isfinite(v.measured):
-            return f"{mech} never reacted ({v.detail}); check whether it is triggered at all for this fault."
-        return (f"{mech} reacted after {v.measured:.0f} ms but {v.req_id} allows {v.limit:.0f} ms; "
-                f"check its threshold or debounce setting.")
-    return f"{mech} did not meet {v.req_id}: {v.detail}."
 
 
 # -- edge-case search -------------------------------------------------------------------------

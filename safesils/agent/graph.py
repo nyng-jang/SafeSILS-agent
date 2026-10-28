@@ -43,12 +43,14 @@ class AgentState(TypedDict, total=False):
 class VerificationAgent:
     def __init__(self, llm: LLM | None, store: ResultStore,
                  make_controller: Callable[[], ControllerUnderTest | None] = lambda: None,
-                 out_dir: str | Path = "out/agent", controller_name: str = "Python reference controller") -> None:
+                 out_dir: str | Path = "out/agent", controller_name: str = "Python reference controller",
+                 controller_tag: str = "python-reference") -> None:
         self.llm = llm
         self.store = store
         self.make_controller = make_controller
         self.out_dir = Path(out_dir)
         self.controller_name = controller_name
+        self.controller_tag = controller_tag
         self.session_id = ""
         self._analyses = 0
         g = StateGraph(AgentState)
@@ -119,7 +121,8 @@ class VerificationAgent:
 
     def _execute(self, state: AgentState) -> dict:
         origin = "plan" if state["round"] == 0 else f"explore-{state['round']}"
-        recs, errors = tools.execute(state["pending"], self.make_controller, self.store, self.session_id, origin)
+        recs, errors = tools.execute(state["pending"], self.make_controller, self.store, self.session_id, origin,
+                                      self.controller_tag)
         self._tool("execute", "run", [s.tc_id for s in state["pending"]], [(r.run_id, r.status) for r in recs] + errors)
         return {"records": state["records"] + recs, "pending": [], "notes": state["notes"] + errors}
 
