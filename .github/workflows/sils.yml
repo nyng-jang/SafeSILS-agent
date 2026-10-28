@@ -15,7 +15,12 @@ jobs:
           python-version: "3.12"
       - name: Install GNU Octave (MATLAB code back-to-back)
         run: sudo apt-get update -q && sudo apt-get install -y -q octave-no-gui || sudo apt-get install -y -q octave
-      - run: pip install -e ".[dev,fmu]"
+      - run: pip install -e ".[dev,fmu,agent]"
       - run: pytest -q
       - name: Run baseline scenarios
         run: safesils run scenarios/baseline --db out/results.db --no-signals --strict
+      - name: Agent smoke test (rule mode, injected defect must be found)
+        run: |
+          mkdir -p out
+          safesils agent "TSR-02 검증" --llm none --mutant slow-timeout --db out/agent.db --out out/agent | tee out/agent.log
+          grep -q "TC-TSR02-001 .*FAIL" out/agent.log

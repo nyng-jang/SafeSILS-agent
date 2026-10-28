@@ -19,6 +19,8 @@ safesils/
   store.py       SQLite 결과 저장(runs, verdicts, signals)
   external.py    외부 제어기 인터페이스: Simulink FMU 어댑터, 원시 CAN 프레임 슬롯
   b2b.py         백투백 비교 (Python ↔ MATLAB 코드 개루프, Python ↔ FMU 폐루프)
+  mutants.py     안전 메커니즘 하나를 약화시킨 결함 주입 제어기 (변이 테스트, 에이전트 데모)
+  agent/         LangGraph 검증 에이전트 (계획, 실행, 로그 분석, 엣지 케이스 탐색, 보고서)
   cli.py         명령줄 도구
 matlab/
   aeb_controller_step.m  AEB 제어기 MATLAB 구현 (codegen 호환, Python과 동일 동작)
@@ -70,6 +72,40 @@ MATLAB 없이도 `safesils b2b scenarios/baseline`이 GNU Octave로 MATLAB 코�
 
 제어기와 하네스 사이의 인터페이스는 실제 ECU가 보는 신호다. 센서마다 활성화당 최대 4개의 원시 CAN 프레임 `[present counter crc obj status_ok range_raw vel_raw]`(거리 0.01 m, 상대속도 0.01 m/s, CRC-8 SAE J1850)과 차속, 운전자 입력, 고장 주입 신호를 받는다.
 
+## 검증 에이전트
+
+자연어 명령을 받아 시나리오를 고르거나 만들고, 실행하고, 실패 원인을 분석하고, 판정 여유가 작은 쪽으로 엣지 케이스를 탐색한 뒤 보고서를 쓴다.
+
+```
+계획(LLM 또는 규칙) → 실행(SILS + 규칙 판정기) → 분석(로그 타임라인 + 원인 가설) ─┬→ 보고서
+                                  ↑                                            │
+                                  └──── 탐색(변형 + LLM 제안, 여유가 작은 쪽) ←──┘
+```
+
+```bash
+pip install -e ".[agent]"
+ollama pull llama3.1                                    # 로컬 LLM (무료)
+safesils agent "TSR-02 경계값 검증하고 엣지 케이스 탐색해줘" --llm ollama:llama3.1
+safesils agent "전체 회귀 검증하고 실패 원인 분석해줘" --llm none --mutant slow-timeout   # LLM 없이, 결함 주입 데모
+```
+
+- `--llm`: `ollama:<모델>`(기본, `OLLAMA_HOST`로 주소 변경), `openai:<모델>`(`pip install -e ".[openai]"`, `OPENAI_API_KEY`), `none`(규칙 기반 계획·원인 메모).
+- `--mutant`: `safesils/mutants.py`의 결함 주입 제어기를 검증 대상으로 쓴다. `--fmu`로 Simulink FMU도 검증할 수 있다.
+- 결과: `out/agent/AGT-<날짜>-<순번>.md` 보고서, `out/results.db`의 `runs`·`verdicts`·`signals`와 감사 기록 `agent_sessions`·`agent_steps`(모든 LLM 호출의 입력과 출력, 도구 호출)·`agent_runs`.
+- GitHub Actions의 "Verification agent (Ollama)" 워크플로를 수동 실행하면 PC 없이 러너에서 Ollama 모델로 에이전트를 돌리고 보고서를 아티팩트로 받는다.
+
+LLM의 역할은 제안으로 한정한다.
+
+| 단계 | LLM이 하는 일 | 결정적 장치 |
+| --- | --- | --- |
+| 계획 | 명령을 계획 JSON(요구사항, 전략, 직접 만든 시나리오)으로 변환 | 스키마 검증, 1회 재시도, 실패 시 규칙 기반 계획 |
+| 시나리오 | 새 시나리오 제안 | 필드·고장 종류·물리 범위 검증, 위반 시 거부하고 기록 |
+| 판정 | 없음 | `judge.py` 규칙만 PASS/FAIL 결정 |
+| 분석 | 로그 타임라인을 근거로 원인 가설과 확인 방법 제시 | 타임라인·규칙 원인 메모는 코드가 추출, 가설은 "확인 필요"로 표시 |
+| 탐색 | 여유가 작은 실행을 보고 더 어려운 시나리오 제안 | 무작위 변형(재현 가능한 시드)과 함께 실행, 여유로 순위 |
+
+여유(margin)는 반응 시간 요구사항(SG-01, TSR-01, 04, 05, 06, 07, 08)의 `(한계 − 측정) / 한계`다. 1은 즉시 반응, 0은 한계와 같음, 음수는 위반이다.
+
 ## 안전 메커니즘과 요구사항
 
 | 메커니즘 | 요구사항 | 판정 규칙 |
@@ -89,7 +125,7 @@ SG-01, TSR-02, TSR-05는 모든 실행에서 불변 조건으로 검사한다.
 
 ## 설계 원칙
 
-- **판정은 결정적이다.** PASS/FAIL은 `judge.py`의 규칙이 내리고, LLM 에이전트는 시나리오 제안과 원인 추론만 맡는다(ISO 26262-8 도구 신뢰도 관점).
+- **판정은 결정적이다.** PASS/FAIL은 `judge.py`의 규칙이 내리고, LLM 에이전트는 시나리오 제안과 원인 추론만 맡는다(ISO 26262-8 도구 신뢰도 관점). LLM 출력은 모두 검증 후 사용하고, 에이전트의 모든 LLM 호출은 감사 기록으로 남는다.
 - **판정기는 제어기 내부를 믿지 않는다.** 센서 값과 프레임 수신 여부는 시뮬레이터가 기록한 실측값(ground truth)으로 판단한다.
 - **제어기는 교체 가능하다.** `sim.ControllerUnderTest`만 만족하면 Simulink에서 FMU로 내보낸 제어기도 같은 시나리오와 판정기로 검증할 수 있다. FMU 제어기가 내보내야 할 출력은 `judge.py` 상단에 정리되어 있다.
 - **판정기도 검증한다.** 변이 테스트가 안전 메커니즘을 하나씩 약화시켜 판정기가 FAIL을 내는지 확인한다.
@@ -103,5 +139,5 @@ SG-01, TSR-02, TSR-05는 모든 실행에서 불변 조건으로 검사한다.
 1. ISO 26262 분석과 AEB 안전 개념 ✓
 2. Python SILS, 시나리오 생성기, 규칙 기반 판정기 ✓
 3. Simulink AEB 제어기와 FMU 연동, Python 제어기와 백투백 비교 ✓ (FMU 내보내기는 MATLAB 환경에서 실행)
-4. LangGraph 에이전트: 자연어 명령, 엣지 케이스 탐색, 로그 분석·원인 추론
+4. LangGraph 에이전트: 자연어 명령, 엣지 케이스 탐색, 로그 분석·원인 추론 ✓
 5. 추적성 매트릭스·검증 보고서 자동 생성, GitHub Actions 회귀 검증
