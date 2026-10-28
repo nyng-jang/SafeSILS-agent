@@ -4,3 +4,7 @@ __pycache__/
 .venv/
 out/
 *.db
+matlab/*.fmu
+matlab/slprj/
+matlab/*_grt_rtw/
+matlab/*.slxc
