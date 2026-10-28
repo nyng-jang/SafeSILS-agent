@@ -1,0 +1,26 @@
+{
+  "tc_id": "TC-SG03-002",
+  "requirements": [
+    "SG-03"
+  ],
+  "description": "Lead brakes at 6 m/s^2 from 50 km/h, ego 70 km/h, gap 30 m",
+  "duration_s": 8.0,
+  "seed": 0,
+  "ego_speed_kph": 70,
+  "lead": {
+    "present": true,
+    "gap_m": 30,
+    "speed_kph": 50,
+    "decel_at_s": 2.0,
+    "decel_mps2": 6.0
+  },
+  "driver": {
+    "brake_at_s": null,
+    "brake_mps2": 4.0,
+    "steer_at_s": null,
+    "steer_rate_dps": 150.0,
+    "steer_duration_s": 0.5
+  },
+  "faults": [],
+  "exploratory": false
+}

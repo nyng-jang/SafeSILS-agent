@@ -1,0 +1,36 @@
+{
+  "tc_id": "TC-TSR08-002",
+  "requirements": [
+    "TSR-08"
+  ],
+  "description": "Control task period 14 ms (within 1.5x tolerance)",
+  "duration_s": 8.0,
+  "seed": 0,
+  "ego_speed_kph": 70.0,
+  "lead": {
+    "present": false,
+    "gap_m": 40.0,
+    "speed_kph": 30.0,
+    "decel_at_s": null,
+    "decel_mps2": 0.0
+  },
+  "driver": {
+    "brake_at_s": null,
+    "brake_mps2": 4.0,
+    "steer_at_s": null,
+    "steer_rate_dps": 150.0,
+    "steer_duration_s": 0.5
+  },
+  "faults": [
+    {
+      "type": "task_overrun",
+      "start_s": 3.0,
+      "end_s": null,
+      "target": null,
+      "params": {
+        "period_ms": 14
+      }
+    }
+  ],
+  "exploratory": false
+}
