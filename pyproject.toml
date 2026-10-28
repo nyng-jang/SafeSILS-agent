@@ -13,6 +13,8 @@ dependencies = ["numpy>=1.24", "pandas>=2.0", "PyYAML>=6.0"]
 [project.optional-dependencies]
 dev = ["pytest>=7", "pythonfmu>=0.6"]
 fmu = ["fmpy>=0.3.20"]
+agent = ["langgraph>=0.2", "langchain-core>=0.3", "langchain-ollama>=0.2"]
+openai = ["langchain-openai>=0.2"]
 
 [project.scripts]
 safesils = "safesils.cli:main"

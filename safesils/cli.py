@@ -8,6 +8,8 @@
   safesils b2b scenarios/baseline                     # open loop vs MATLAB code (Octave/MATLAB)
   safesils b2b scenarios/baseline --fmu matlab/AEB_Controller.fmu   # closed loop vs FMU
   safesils b2b scenarios/baseline --export matlab/b2b_vectors        # test vectors for b2b_simulink.m
+  safesils agent "TSR-02 경계값 검증하고 엣지 케이스 탐색해줘" --llm ollama:llama3.1
+  safesils agent "전체 회귀 검증" --llm none --mutant slow-timeout     # demo: find an injected defect
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ import argparse
 from pathlib import Path
 
 from . import generator
+from .mutants import MUTANTS
 from .judge import FAIL, evaluate, overall
 from .scenario import Scenario
 from .sim import run
@@ -90,6 +93,28 @@ def cmd_b2b(a: argparse.Namespace) -> int:
     return 1 if differing else 0
 
 
+def cmd_agent(a: argparse.Namespace) -> int:
+    from .agent import VerificationAgent, make_llm
+
+    if a.mutant:
+        m = MUTANTS[a.mutant]
+        make, name = m.make, f"defect-injected controller '{m.name}' ({m.description})"
+    elif a.fmu:
+        make, name = (lambda: _controller(a.fmu)), f"FMU {a.fmu}"
+    else:
+        make, name = (lambda: None), "Python reference controller"
+    agent = VerificationAgent(make_llm(a.llm), ResultStore(a.db), make, a.out, name)
+    state = agent.run(a.command)
+    for note in state["notes"]:
+        print(f"note: {note}")
+    for r in state["records"]:
+        print(f"{r.run_id}  {r.scenario.tc_id:<18} {r.origin:<10} {r.status:<5} " +
+              "  ".join(f"{v.req_id}={v.verdict}" for v in r.verdicts))
+    failed = sum(r.status == "FAIL" for r in state["records"])
+    print(f"\n{len(state['records'])} runs, {failed} failed; report {state['report_path']}, session {agent.session_id} in {a.db}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="safesils")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -109,12 +134,22 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("paths", nargs="+")
     b.add_argument("--fmu", help="compare closed loop against this FMU; default: open loop against matlab/*.m")
     b.add_argument("--export", metavar="DIR", help="only write input/expected-output CSV vectors for MATLAB")
+    ag = sub.add_parser("agent", help="LLM verification agent: natural-language command to runs, analysis and report")
+    ag.add_argument("command")
+    ag.add_argument("--llm", default="ollama:llama3.1", help="none | ollama:<model> | openai:<model>")
+    ag.add_argument("--db", default="out/results.db")
+    ag.add_argument("--out", default="out/agent", help="report directory")
+    ag.add_argument("--fmu", help="verify this FMU controller instead of the Python reference")
+    ag.add_argument("--mutant", choices=sorted(MUTANTS),
+                    help="verify a controller with one injected defect (demo)")
     a = ap.parse_args(argv)
     if a.cmd == "generate":
         cmd_generate(a)
         return 0
     if a.cmd == "b2b":
         return cmd_b2b(a)
+    if a.cmd == "agent":
+        return cmd_agent(a)
     return cmd_run(a)
 
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from safesils import generator
-from safesils.controller import AEBController, Params
+from safesils.mutants import MUTANTS
 from safesils.judge import FAIL, PASS, evaluate, overall
 from safesils.scenario import Fault, Lead, Scenario
 from safesils.sim import run
@@ -46,29 +46,15 @@ def test_counter_wrap_after_long_loss_recovers() -> None:
     assert len(recovered), "radar never recovered after the corruption window"
 
 
-MUTANTS = [
-    ("TC-TSR02-001", "TSR-02", Params(timeout_ms=400)),
-    ("TC-TSR03-002", "TSR-03", Params(mismatch_abs_m=1000.0, mismatch_rel=10.0)),
-    ("TC-TSR04-001", "TSR-04", Params(monitor_debounce_ms=500)),
-    ("TC-TSR06-001", "TSR-06", Params(steer_rate_dps=500.0)),
-    ("TC-TSR07-001", "TSR-07", Params(mismatch_degraded_ms=10**6, timeout_ms=10**6)),
-    ("TC-TSR08-001", "TSR-08", Params(wd_max_violations=1000)),
-]
-
-
-@pytest.mark.parametrize("tc_id,req_id,params", MUTANTS, ids=[m[1] for m in MUTANTS])
-def test_judge_catches_weakened_mechanism(tc_id: str, req_id: str, params: Params) -> None:
-    res = run(BASELINE[tc_id], AEBController(params))
+@pytest.mark.parametrize("name", sorted(MUTANTS))
+def test_judge_catches_weakened_mechanism(name: str) -> None:
+    m = MUTANTS[name]
+    res = run(BASELINE[m.tc_id], m.make())
     verdict = {v.req_id: v.verdict for v in evaluate(res)}
-    assert verdict[req_id] == FAIL
+    assert verdict[m.req_id] == FAIL
 
 
-def test_judge_catches_missing_monitor() -> None:
+def test_missing_monitor_also_violates_safety_goal() -> None:
     """Without the monitor gate the corrupted brake command reaches the actuator (SG-01)."""
-
-    class NoMonitor(AEBController):
-        def _monitor(self, t_ms: int, brake_cmd: float) -> tuple[float, bool]:
-            return brake_cmd, False
-
-    verdict = {v.req_id: v.verdict for v in evaluate(run(BASELINE["TC-TSR04-001"], NoMonitor()))}
-    assert verdict["SG-01"] == FAIL and verdict["TSR-04"] == FAIL
+    verdict = {v.req_id: v.verdict for v in evaluate(run(BASELINE["TC-TSR04-001"], MUTANTS["no-monitor"].make()))}
+    assert verdict["SG-01"] == FAIL

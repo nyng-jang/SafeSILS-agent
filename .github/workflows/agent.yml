@@ -1,0 +1,69 @@
+name: Verification agent (Ollama)
+
+# Runs the LLM agent with a local Ollama model on a GitHub runner (free, no API key).
+# Start it from Actions > "Verification agent (Ollama)" > Run workflow; the report and
+# the result database are attached to the run as the "agent-report" artifact.
+# It also runs when this file changes, as a check that the Ollama path still works.
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Natural-language verification command"
+        default: "TSR-02 경계값을 검증하고 엣지 케이스를 탐색해줘"
+      model:
+        description: "Ollama model (CPU runner: 3B or smaller is practical)"
+        default: "qwen2.5:3b"
+      mutant:
+        description: "Optional injected defect (see safesils/mutants.py), e.g. slow-timeout"
+        default: ""
+  pull_request:
+    paths: [".github/workflows/agent.yml"]
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      COMMAND: ${{ inputs.command || 'TSR-02 검증하고 실패 원인을 분석해줘' }}
+      MODEL: ${{ inputs.model || 'qwen2.5:1.5b' }}
+      MUTANT: ${{ inputs.mutant || (github.event_name == 'pull_request' && 'slow-timeout' || '') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[agent]"
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          (ollama serve > ollama.log 2>&1 &)
+          for i in $(seq 1 30); do curl -sf http://localhost:11434/api/tags && break; sleep 1; done
+          ollama pull "$MODEL"
+      - name: Run agent
+        run: |
+          mkdir -p out
+          args=(--llm "ollama:$MODEL" --db out/agent.db --out out/agent)
+          if [ -n "$MUTANT" ]; then args+=(--mutant "$MUTANT"); fi
+          safesils agent "$COMMAND" "${args[@]}" | tee out/agent.log
+          cat out/agent/*.md >> "$GITHUB_STEP_SUMMARY"
+      - name: LLM calls were made and logged
+        run: |
+          python - <<'EOF'
+          import sqlite3
+          con = sqlite3.connect("out/agent.db")
+          rows = con.execute("SELECT node, kind FROM agent_steps").fetchall()
+          llm = [r for r in rows if r[1].startswith("llm:")]
+          errors = [r for r in rows if r[1] == "llm-error"]
+          print(f"{len(llm)} LLM calls, {len(errors)} LLM errors")
+          assert llm and not errors, rows
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-report
+          path: |
+            out/agent/
+            out/agent.db
+            out/agent.log
+            ollama.log

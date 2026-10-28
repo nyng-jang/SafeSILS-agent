@@ -1,6 +1,6 @@
 """Scenario generation: requirement baselines, boundary sweeps and fault combinations.
 
-The LLM agent (step 4) will call these as tools and add its own scenarios; this
+The LLM agent (safesils.agent) calls these as tools and adds its own scenarios; this
 module is the deterministic part so that every generated TC is reproducible
 from (kind, requirement, seed).
 """

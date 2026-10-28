@@ -1,4 +1,5 @@
-"""SQLite result store: runs, verdicts and the full signal log of every run."""
+"""SQLite result store: runs, verdicts, the full signal log of every run, and the
+agent's audit trail (sessions, every LLM call and tool call, runs it started)."""
 from __future__ import annotations
 
 import json
@@ -29,6 +30,28 @@ CREATE TABLE IF NOT EXISTS verdicts (
     measured REAL,
     limit_value REAL,
     detail TEXT
+);
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    session_id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    command TEXT NOT NULL,
+    llm TEXT NOT NULL,
+    plan_json TEXT,
+    report_path TEXT
+);
+CREATE TABLE IF NOT EXISTS agent_steps (
+    session_id TEXT NOT NULL REFERENCES agent_sessions(session_id),
+    seq INTEGER NOT NULL,
+    node TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    input TEXT,
+    output TEXT,
+    at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_runs (
+    session_id TEXT NOT NULL REFERENCES agent_sessions(session_id),
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    origin TEXT NOT NULL
 );
 """
 
@@ -64,6 +87,34 @@ class ResultStore:
             df.to_sql("signals", self.con, if_exists="append", index=False)
         self.con.commit()
         return run_id
+
+    # -- agent audit trail ---------------------------------------------------------------
+
+    def start_session(self, command: str, llm: str) -> str:
+        now = datetime.now(timezone.utc)
+        prefix = f"AGT-{now:%Y%m%d}-"
+        n = self.con.execute("SELECT COUNT(*) FROM agent_sessions WHERE session_id LIKE ?", (prefix + "%",)).fetchone()[0]
+        session_id = f"{prefix}{n + 1:04d}"
+        self.con.execute("INSERT INTO agent_sessions VALUES (?,?,?,?,?,?)",
+                         (session_id, now.isoformat(timespec="seconds"), command, llm, None, None))
+        self.con.commit()
+        return session_id
+
+    def log_step(self, session_id: str, node: str, kind: str, input: str, output: str) -> None:
+        seq = self.con.execute("SELECT COUNT(*) FROM agent_steps WHERE session_id = ?", (session_id,)).fetchone()[0]
+        self.con.execute("INSERT INTO agent_steps VALUES (?,?,?,?,?,?,?)",
+                         (session_id, seq + 1, node, kind, input, output,
+                          datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        self.con.commit()
+
+    def link_run(self, session_id: str, run_id: str, origin: str) -> None:
+        self.con.execute("INSERT INTO agent_runs VALUES (?,?,?)", (session_id, run_id, origin))
+        self.con.commit()
+
+    def finish_session(self, session_id: str, plan_json: str, report_path: str) -> None:
+        self.con.execute("UPDATE agent_sessions SET plan_json = ?, report_path = ? WHERE session_id = ?",
+                         (plan_json, report_path, session_id))
+        self.con.commit()
 
 
 def _num(x: float | None) -> float | None:
