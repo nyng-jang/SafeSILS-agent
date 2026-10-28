@@ -4,6 +4,9 @@
   safesils generate sweep --req TSR-02 --n 7 --out scenarios/sweep
   safesils generate combo --n 20 --seed 1 --out scenarios/exploratory
   safesils run scenarios/baseline --db out/results.db
+  safesils run scenarios/baseline --fmu matlab/AEB_Controller.fmu
+  safesils b2b scenarios/baseline                     # open loop vs MATLAB code (Octave/MATLAB)
+  safesils b2b scenarios/baseline --fmu matlab/AEB_Controller.fmu   # closed loop vs FMU
 """
 from __future__ import annotations
 
@@ -36,12 +39,19 @@ def cmd_generate(a: argparse.Namespace) -> None:
     print(f"wrote {len(scns)} scenarios to {a.out}")
 
 
+def _controller(fmu: str | None):
+    if not fmu:
+        return None
+    from .external import FMUController
+    return FMUController(fmu)
+
+
 def cmd_run(a: argparse.Namespace) -> int:
     store = ResultStore(a.db)
     failed = 0
     for f in _scenario_files(a.paths):
         scn = Scenario.load(f)
-        res = run(scn)
+        res = run(scn, _controller(a.fmu))
         verdicts = evaluate(res)
         run_id = store.save(res, verdicts, keep_signals=not a.no_signals)
         status = overall(verdicts, scn)
@@ -54,6 +64,23 @@ def cmd_run(a: argparse.Namespace) -> int:
                     print(f"    {v.req_id}: {v.detail}")
     print(f"\n{failed} failed, results in {a.db}")
     return 1 if failed and a.strict else 0
+
+
+def cmd_b2b(a: argparse.Namespace) -> int:
+    from . import b2b
+    differing = 0
+    for f in _scenario_files(a.paths):
+        scn = Scenario.load(f)
+        if a.fmu:
+            diffs = [str(d) for d in b2b.closed_loop(scn, _controller(a.fmu))]
+        else:
+            diffs = [f"t={d.t_ms} ms {d.signal}: python {d.python} vs matlab {d.matlab}" for d in b2b.open_loop(scn)]
+        differing += bool(diffs)
+        print(f"{scn.tc_id:<18} {'MATCH' if not diffs else f'{len(diffs)} differences'}")
+        for d in diffs[:5]:
+            print(f"    {d}")
+    print(f"\n{differing} scenarios differ")
+    return 1 if differing else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -70,10 +97,16 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--db", default="out/results.db")
     r.add_argument("--no-signals", action="store_true", help="store verdicts only")
     r.add_argument("--strict", action="store_true", help="exit 1 if any run fails")
+    r.add_argument("--fmu", help="controller under test as an FMU instead of the Python reference")
+    b = sub.add_parser("b2b", help="back-to-back: Python reference vs MATLAB code or FMU")
+    b.add_argument("paths", nargs="+")
+    b.add_argument("--fmu", help="compare closed loop against this FMU; default: open loop against matlab/*.m")
     a = ap.parse_args(argv)
     if a.cmd == "generate":
         cmd_generate(a)
         return 0
+    if a.cmd == "b2b":
+        return cmd_b2b(a)
     return cmd_run(a)
 
 

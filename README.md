@@ -17,7 +17,13 @@ safesils/
   judge.py       요구사항별 규칙 기반 PASS/FAIL 판정
   generator.py   기준·경계값·복합 고장 시나리오 생성
   store.py       SQLite 결과 저장(runs, verdicts, signals)
+  external.py    외부 제어기 인터페이스: Simulink FMU 어댑터, 원시 CAN 프레임 슬롯
+  b2b.py         백투백 비교 (Python ↔ MATLAB 코드 개루프, Python ↔ FMU 폐루프)
   cli.py         명령줄 도구
+matlab/
+  aeb_controller_step.m  AEB 제어기 MATLAB 구현 (codegen 호환, Python과 동일 동작)
+  build_aeb_model.m      Simulink 모델(AEB_Controller.slx) 생성과 FMU 내보내기
+  replay_inputs.m        기록된 입력 개루프 재생 (MATLAB, Octave 공용)
 scenarios/baseline/  요구사항별 회귀 시나리오 17개
 tests/               회귀 테스트와 판정기 변이(mutation) 테스트
 ```
@@ -32,6 +38,26 @@ safesils generate sweep --req TSR-02 --n 7 --out out/sweep
 safesils generate combo --n 50 --seed 1 --out out/exploratory
 safesils run out/sweep out/exploratory --db out/results.db --no-signals
 ```
+
+## Simulink 제어기 (FMU)
+
+검증 대상 제어기는 Simulink 모델로도 존재한다. `matlab/aeb_controller_step.m`이 제어 로직이고, `build_aeb_model.m`이 이를 MATLAB Function 블록에 넣은 10 ms 고정 스텝 모델을 만든다.
+
+```matlab
+% MATLAB R2026b, 저장소 루트에서
+cd matlab
+build_aeb_model(true)   % AEB_Controller.slx 저장, AEB_Controller.fmu (FMI 2.0 CS) 내보내기
+```
+
+```bash
+pip install -e ".[fmu]"
+safesils b2b scenarios/baseline --fmu matlab/AEB_Controller.fmu    # Python 기준 제어기와 폐루프 비교
+safesils run scenarios/baseline --fmu matlab/AEB_Controller.fmu    # FMU 제어기로 전체 판정
+```
+
+MATLAB 없이도 `safesils b2b scenarios/baseline`이 GNU Octave로 MATLAB 코드를 개루프 재생해 Python 기준 제어기와 모든 활성화의 모든 출력을 비교한다. FMU 어댑터는 `tests/fmu_stub`의 대체 FMU로 테스트한다.
+
+제어기와 하네스 사이의 인터페이스는 실제 ECU가 보는 신호다. 센서마다 활성화당 최대 4개의 원시 CAN 프레임 `[present counter crc obj status_ok range_raw vel_raw]`(거리 0.01 m, 상대속도 0.01 m/s, CRC-8 SAE J1850)과 차속, 운전자 입력, 고장 주입 신호를 받는다.
 
 ## 안전 메커니즘과 요구사항
 
@@ -65,6 +91,6 @@ SG-01, TSR-02, TSR-05는 모든 실행에서 불변 조건으로 검사한다.
 
 1. ISO 26262 분석과 AEB 안전 개념 ✓
 2. Python SILS, 시나리오 생성기, 규칙 기반 판정기 ✓
-3. Simulink/Stateflow AEB 제어기와 FMU 연동, Python 제어기와 백투백 비교
+3. Simulink AEB 제어기와 FMU 연동, Python 제어기와 백투백 비교 ✓ (FMU 내보내기는 MATLAB 환경에서 실행)
 4. LangGraph 에이전트: 자연어 명령, 엣지 케이스 탐색, 로그 분석·원인 추론
 5. 추적성 매트릭스·검증 보고서 자동 생성, GitHub Actions 회귀 검증
