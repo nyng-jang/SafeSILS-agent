@@ -55,6 +55,15 @@ def decode_outputs(y: np.ndarray | list[float]) -> dict:
     return out
 
 
+def encode_outputs(out: dict) -> list[float]:
+    """Inverse of decode_outputs: the numeric output row the MATLAB/Simulink controller produces."""
+    row = []
+    for name in OUTPUT_NAMES:
+        v = out[name]
+        row.append(float(STATES.index(v)) if name == "aeb_state" else float(v))
+    return row
+
+
 def input_vector(t_ms: int, radar_msgs: list[Message], camera_msgs: list[Message], ego_speed_mps: float,
                  driver_brake: bool, steer_rate_dps: float, brake_cmd_fault: float | None) -> np.ndarray:
     """Flat input row: t, 28 radar slot values, 28 camera slot values, vehicle/driver/fault signals."""

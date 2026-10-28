@@ -7,6 +7,7 @@
   safesils run scenarios/baseline --fmu matlab/AEB_Controller.fmu
   safesils b2b scenarios/baseline                     # open loop vs MATLAB code (Octave/MATLAB)
   safesils b2b scenarios/baseline --fmu matlab/AEB_Controller.fmu   # closed loop vs FMU
+  safesils b2b scenarios/baseline --export matlab/b2b_vectors        # test vectors for b2b_simulink.m
 """
 from __future__ import annotations
 
@@ -68,6 +69,12 @@ def cmd_run(a: argparse.Namespace) -> int:
 
 def cmd_b2b(a: argparse.Namespace) -> int:
     from . import b2b
+    if a.export:
+        files = _scenario_files(a.paths)
+        for f in files:
+            b2b.export_vectors(Scenario.load(f), Path(a.export))
+        print(f"wrote test vectors for {len(files)} scenarios to {a.export}")
+        return 0
     differing = 0
     for f in _scenario_files(a.paths):
         scn = Scenario.load(f)
@@ -101,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     b = sub.add_parser("b2b", help="back-to-back: Python reference vs MATLAB code or FMU")
     b.add_argument("paths", nargs="+")
     b.add_argument("--fmu", help="compare closed loop against this FMU; default: open loop against matlab/*.m")
+    b.add_argument("--export", metavar="DIR", help="only write input/expected-output CSV vectors for MATLAB")
     a = ap.parse_args(argv)
     if a.cmd == "generate":
         cmd_generate(a)

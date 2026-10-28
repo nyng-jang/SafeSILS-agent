@@ -24,6 +24,8 @@ matlab/
   aeb_controller_step.m  AEB 제어기 MATLAB 구현 (codegen 호환, Python과 동일 동작)
   build_aeb_model.m      Simulink 모델(AEB_Controller.slx) 생성과 FMU 내보내기
   replay_inputs.m        기록된 입력 개루프 재생 (MATLAB, Octave 공용)
+  b2b_simulink.m         MATLAB 안에서 Simulink 모델과 Python 기준 출력 백투백 비교
+  b2b_vectors/           백투백 입력·기대 출력 벡터 (CSV)
 scenarios/baseline/  요구사항별 회귀 시나리오 17개
 tests/               회귀 테스트와 판정기 변이(mutation) 테스트
 ```
@@ -54,6 +56,15 @@ pip install -e ".[fmu]"
 safesils b2b scenarios/baseline --fmu matlab/AEB_Controller.fmu    # Python 기준 제어기와 폐루프 비교
 safesils run scenarios/baseline --fmu matlab/AEB_Controller.fmu    # FMU 제어기로 전체 판정
 ```
+
+Python을 쓸 수 없는 PC(예: Windows 스마트 앱 컨트롤이 pip 패키지 DLL을 차단하는 경우)에서는 MATLAB 안에서 백투백 비교를 한다. `matlab/b2b_vectors`에 기준 시나리오 17개의 제어기 입력과 Python 기준 출력이 들어 있다.
+
+```matlab
+cd matlab
+b2b_simulink   % AEB_Controller.slx를 같은 입력으로 개루프 시뮬레이션하고 모든 출력 비교
+```
+
+제어기를 바꾸면 `safesils b2b scenarios/baseline --export matlab/b2b_vectors`로 벡터를 다시 만든다(테스트가 최신 여부를 검사한다).
 
 MATLAB 없이도 `safesils b2b scenarios/baseline`이 GNU Octave로 MATLAB 코드를 개루프 재생해 Python 기준 제어기와 모든 활성화의 모든 출력을 비교한다. FMU 어댑터는 `tests/fmu_stub`의 대체 FMU로 테스트한다.
 

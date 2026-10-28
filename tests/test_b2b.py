@@ -41,3 +41,26 @@ def test_fmu_adapter_closed_loop(stub_fmu: Path, tc_id: str) -> None:
         assert closed_loop(BASELINE[tc_id], ctrl) == []
     finally:
         ctrl.close()
+
+
+VECTORS = Path(__file__).resolve().parent.parent / "matlab" / "b2b_vectors"
+
+
+def test_committed_b2b_vectors_are_current(tmp_path: Path) -> None:
+    """matlab/b2b_vectors must match the Python reference; regenerate with
+    `safesils b2b scenarios/baseline --export matlab/b2b_vectors` after controller changes."""
+    from safesils.b2b import export_vectors
+    from safesils.scenario import Scenario
+
+    scenarios = sorted((VECTORS.parent.parent / "scenarios" / "baseline").glob("*.json"))
+    assert len(list(VECTORS.glob("*.in.csv"))) == len(scenarios)
+    for f in scenarios:
+        for new in export_vectors(Scenario.load(f), tmp_path):
+            assert new.read_text() == (VECTORS / new.name).read_text(), f"{new.name} is stale"
+
+
+@pytest.mark.skipif(not shutil.which("octave"), reason="needs GNU Octave")
+def test_b2b_simulink_script_without_model() -> None:
+    cmd = f"addpath('{VECTORS.parent.as_posix()}'); exit(~b2b_simulink('', false));"
+    res = subprocess.run(["octave", "--no-gui", "--quiet", "--eval", cmd], capture_output=True, text=True)
+    assert res.returncode == 0, res.stdout + res.stderr
