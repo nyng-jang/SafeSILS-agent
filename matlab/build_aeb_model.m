@@ -35,6 +35,10 @@ OUTPUT_NAMES = {'aeb_state', 'brake_req_mps2', 'brake_cmd_internal', 'fcw_warnin
 if bdIsLoaded(mdl)
     close_system(mdl, 0);
 end
+slx = fullfile(here, [mdl '.slx']);
+if exist(slx, 'file')
+    delete(slx);  % rebuilt from scratch; avoids the "model name is shadowing" warning
+end
 new_system(mdl);
 set_param(mdl, 'SolverType', 'Fixed-step', 'Solver', 'FixedStepDiscrete', ...
           'FixedStep', '0.01', 'StopTime', 'inf');
@@ -76,10 +80,16 @@ fprintf('saved %s\n', fullfile(here, [mdl '.slx']));
 if export_fmu
     old = cd(here);
     cleanup = onCleanup(@() cd(old));
-    if exist('exportToFMU', 'file')
+    if ~isempty(which('exportToFMU'))
         exportToFMU(mdl, 'FMIVersion', '2.0', 'FMUType', 'CS', 'SaveDirectory', here);
-    else
+    elseif ~isempty(which('exportToFMU2CS'))  % releases before R2023b
         exportToFMU2CS(mdl, 'SaveDirectory', here);
+    else
+        error('build_aeb_model:noFMUExport', ...
+              ['%s.slx was saved, but FMU export is not available.\n' ...
+               'Standalone FMU export needs the Simulink Compiler add-on ' ...
+               '(Home > Add-Ons > Get Add-Ons > "Simulink Compiler").\n' ...
+               'Check with: ver simulinkcompiler'], mdl);
     end
     fprintf('exported %s\n', fullfile(here, [mdl '.fmu']));
 end
